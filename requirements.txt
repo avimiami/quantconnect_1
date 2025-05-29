@@ -1,0 +1,2 @@
+We are creating a back end framework for a trading strategy hub. 
+
