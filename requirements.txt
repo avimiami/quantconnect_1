@@ -1,2 +1,139 @@
 We are creating a back end framework for a trading strategy hub. 
 
+/my_trading_engine/
+│
+├── config.py                     # STRATEGY_CONFIG with tags, etc.
+├── dagster_pipeline.py          # Dagster job runner
+├── main.py                      # CLI runner
+├── requirements.txt
+│
+├── outputs/                     # JSON export folder
+│   └── portfolio.json
+│
+├── strategies/
+│   ├── entries/
+│   │   ├── momentum_breakout.py
+│   │   ├── moving_average_crossover.py
+│   │   ├── value_entry.py
+│   │   ├── low_volatility_entry.py
+│   │   ├── custom_entry_x.py
+│   │
+│   ├── exits/
+│   │   ├── exit_ma_macd.py
+│   │   ├── exit_rsi_overbought.py
+│   │   ├── exit_trailing_stop.py
+│   │   ├── exit_rebalance_date.py
+│   │   ├── exit_macd_cross.py
+│   │   ├── exit_long_term_value.py
+│   │   ├── exit_earnings_warning.py
+│   │   ├── exit_custom_fundamental.py
+│   │   ├── exit_drawdown_limit.py
+│   │   ├── exit_quick_trade.py
+│   │
+│   ├── investment_strategies/
+│   │   ├── buy_and_hold.py
+│   │   ├── relative_strength.py
+│   │   ├── fundamental_longterm.py
+│   │   ├── retirement_allocation.py
+│   │
+│   ├── trading_strategies/         
+│   │   ├── range_trade_sell_extreme.py
+│   │   ├── buy_pump_pull_back.py
+│
+├── utils/
+│   ├── data_loader.py
+│   ├── indicators.py
+│   ├── stats.py
+│   └── json_export.py
+
+
+############################ Sample Outputs #################
+
+{
+  "XLF": {
+    "symbol": "XLF",
+    "tags": ["sector", "financials", "retirement_core"],
+    "allocation": 0.05,
+    "exit_signal": true,
+    "latest_indicators": {
+      "close": 38.25,
+      "MA50": 38.56,
+      "MACD": -0.23
+    },
+    "position_size_dollars": 5000,
+    "pnl_spark_chart": [10, 20, 18, 22, 25, 27, 28, 30, 32, 31, ...], 
+    "returns": {
+      "1d": 0.0015,
+      "1w": 0.008,
+      "1m": 0.03,
+      "3m": 0.11,
+      "ytd": 0.17
+    },
+    "sharpe_ratios": {
+      "90d": 1.45,
+      "180d": 1.32,
+      "360d": 1.12
+    },
+    "total_return": 0.25,
+    "total_pnl_dollars": 1250
+  }
+}
+
+
+utils.stat.py
+
+import pandas as pd
+import numpy as np
+
+def compute_returns(df):
+    df = df.copy()
+    df['returns'] = df['close'].pct_change()
+    df['cum_returns'] = (1 + df['returns']).cumprod()
+
+    now = df.index[-1]
+    lookup = {
+        "1d": now - pd.Timedelta(days=1),
+        "1w": now - pd.Timedelta(days=7),
+        "1m": now - pd.DateOffset(months=1),
+        "3m": now - pd.DateOffset(months=3),
+        "ytd": pd.Timestamp(f"{now.year}-01-01")
+    }
+
+    result = {}
+    for label, ts in lookup.items():
+        past = df[df.index <= ts]
+        if not past.empty:
+            base = past.iloc[-1]["cum_returns"]
+            result[label] = df.iloc[-1]["cum_returns"] / base - 1
+        else:
+            result[label] = None
+
+    return result
+
+
+def compute_sharpe(df, periods=[90, 180, 360]):
+    df = df.copy()
+    df['daily_return'] = df['close'].pct_change()
+    sharpes = {}
+    for p in periods:
+        subset = df.tail(p)
+        if len(subset) < 2:
+            sharpes[f"{p}d"] = None
+            continue
+        mean = subset['daily_return'].mean()
+        std = subset['daily_return'].std()
+        sharpes[f"{p}d"] = (mean / std) * np.sqrt(252) if std > 0 else None
+    return sharpes
+
+
+def compute_pnl_spark(df, position_size):
+    df = df.tail(30).copy()
+    df['returns'] = df['close'].pct_change().fillna(0)
+    df['cum_return'] = (1 + df['returns']).cumprod()
+    df['pnl'] = position_size * (df['cum_return'] - 1)
+    return df['pnl'].tolist()
+
+
+def compute_total_return(df):
+    return df['close'].iloc[-1] / df['close'].iloc[0] - 1
+
